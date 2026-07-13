@@ -1,0 +1,16 @@
+[package]
+name = "nixtrument"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "A small nix instrumentation framework, mainly for determining coverage"
+authors = ["Florian Nalu Adam"]
+
+[[bin]]
+name = "nixtrument"
+path = "src/main.rs"
+
+[dependencies]
+nixtrument-lib = { path = "../nixtrument-lib" }
+clap = { version = "4.6.1", features = ["derive"] }
+anyhow = "1.0.103"

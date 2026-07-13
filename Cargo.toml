@@ -1,14 +1,4 @@
-[package]
-name = "nixtrument"
-version = "0.1.0"
-edition = "2024"
-license = "MIT"
-description = "A small nix instrumentation framework, mainly for determining coverage"
-authors = ["Florian Nalu Adam"]
-
-[dependencies]
-clap = { version = "4.6.1", features = ["derive"] }
-rnix = "0.14.0"
-rowan = "0.16.1"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
+[workspace]
+members = ["nixtrument", "nixtrument-instrument", "nixtrument-lib"]
+default-members = ["nixtrument", "nixtrument-instrument"]
+resolver = "2"

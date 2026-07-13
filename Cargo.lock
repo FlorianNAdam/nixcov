@@ -53,6 +53,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.103"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
+
+[[package]]
 name = "clap"
 version = "4.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -138,7 +144,25 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 name = "nixtrument"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap",
+ "nixtrument-lib",
+]
+
+[[package]]
+name = "nixtrument-instrument"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "nixtrument-lib",
+]
+
+[[package]]
+name = "nixtrument-lib"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "rnix",
  "rowan",
  "serde",
