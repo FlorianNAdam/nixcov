@@ -438,7 +438,7 @@ pub fn instrumentation_derivation_expr(
           runId = {run_id};
           source = {source};
         in
-        pkgs.runCommand "nixtrument-instrumented-source" {{ }} ''
+pkgs.runCommand "nixcov-instrumented-source" {{ }} ''
           mkdir -p "$out"
           ${{instrumentBin}} instrument-source --run-id '${{runId}}' ${{source}} "$out/source" "$out/coverage-map.json"
         ''
@@ -868,17 +868,17 @@ mod tests {
     #[test]
     fn builds_instrumentation_derivation_expression() {
         let expr = instrumentation_derivation_expr(
-            Path::new("/nix/store/abc123-nixtrument-instrument/bin/nixtrument-instrument"),
+            Path::new("/nix/store/abc123-nixcov-instrument/bin/nixcov-instrument"),
             Path::new("/nix/store/def456-source"),
             RUN_ID,
         )
         .expect("expression builds");
 
-        assert!(expr.contains("pkgs.runCommand \"nixtrument-instrumented-source\""));
+        assert!(expr.contains("pkgs.runCommand \"nixcov-instrumented-source\""));
         assert!(expr.contains(
-            "instrumentPackage = builtins.storePath \"/nix/store/abc123-nixtrument-instrument\";"
+            "instrumentPackage = builtins.storePath \"/nix/store/abc123-nixcov-instrument\";"
         ));
-        assert!(expr.contains("instrumentBinRelative = \"bin/nixtrument-instrument\";"));
+        assert!(expr.contains("instrumentBinRelative = \"bin/nixcov-instrument\";"));
         assert!(
             expr.contains("instrumentBin = \"${instrumentPackage}/${instrumentBinRelative}\";")
         );
@@ -1021,7 +1021,7 @@ mod tests {
             total_lines: 2,
             files,
         };
-        let path = std::env::temp_dir().join(format!("nixtrument-{RUN_ID}.lcov"));
+        let path = std::env::temp_dir().join(format!("nixcov-{RUN_ID}.lcov"));
 
         write_lcov(&path, &coverage).expect("lcov writes");
         let lcov = fs::read_to_string(&path).expect("lcov reads");

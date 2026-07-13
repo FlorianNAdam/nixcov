@@ -1,15 +1,15 @@
 use anyhow::anyhow;
 use clap::Parser;
-use nixtrument_lib::run_coverage;
+use nixcov_lib::run_coverage;
 use std::env;
 use std::path::PathBuf;
 
-const INSTRUMENT_BIN_ENV: &str = "NIXTRUMENT_INSTRUMENT_BIN";
+const INSTRUMENT_BIN_ENV: &str = "NIXCOV_INSTRUMENT_BIN";
 
 #[derive(Debug, Parser)]
 #[command(version, about)]
 struct Cli {
-    /// Nix store path to the nixtrument-instrument binary used inside the instrumentation derivation.
+    /// Nix store path to the nixcov-instrument binary used inside the instrumentation derivation.
     #[arg(long)]
     instrument_bin: Option<PathBuf>,
     /// Write LCOV line coverage to this path.

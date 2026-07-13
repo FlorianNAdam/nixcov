@@ -3,7 +3,7 @@
   naersk,
 }:
 let
-  cargoToml = builtins.fromTOML (builtins.readFile ./nixtrument/Cargo.toml);
+  cargoToml = builtins.fromTOML (builtins.readFile ./nixcov/Cargo.toml);
   naersk-lib = pkgs.callPackage naersk { };
 in
 naersk-lib.buildPackage {
@@ -16,8 +16,8 @@ naersk-lib.buildPackage {
   postInstall = ''
     wrapProgram "$out/bin/${cargoToml.package.name}" \
       --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.nix ]} \
-      --set NIXTRUMENT_INSTRUMENT_BIN "$out/bin/.nixtrument-instrument-wrapped"
-    wrapProgram "$out/bin/nixtrument-instrument" \
+      --set NIXCOV_INSTRUMENT_BIN "$out/bin/.nixcov-instrument-wrapped"
+    wrapProgram "$out/bin/nixcov-instrument" \
       --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.nix ]}
   '';
 }

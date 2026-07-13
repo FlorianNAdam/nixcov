@@ -24,7 +24,7 @@
       perSystem =
         { config, pkgs, ... }:
         let
-          cargoToml = fromTOML (builtins.readFile ./nixtrument/Cargo.toml);
+          cargoToml = fromTOML (builtins.readFile ./nixcov/Cargo.toml);
           packageName = cargoToml.package.name;
           package = import ./default.nix { inherit pkgs naersk; };
           cargo-lock = pkgs.writeShellApplication {
@@ -48,7 +48,7 @@
         {
           packages = {
             "${packageName}" = package;
-            nixtrument-instrument = package;
+            nixcov-instrument = package;
             default = package;
           };
 
@@ -57,9 +57,9 @@
               type = "app";
               program = "${package}/bin/${packageName}";
             };
-            nixtrument-instrument = {
+            nixcov-instrument = {
               type = "app";
-              program = "${package}/bin/nixtrument-instrument";
+              program = "${package}/bin/nixcov-instrument";
             };
             default = config.apps."${packageName}";
           };

@@ -1,16 +1,16 @@
 [package]
-name = "nixtrument-instrument"
+name = "nixcov"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Nix source instrumentation binary for nixtrument"
+description = "Nix evaluation coverage tooling"
 authors = ["Florian Nalu Adam"]
 
 [[bin]]
-name = "nixtrument-instrument"
+name = "nixcov"
 path = "src/main.rs"
 
 [dependencies]
-nixtrument-lib = { path = "../nixtrument-lib" }
+nixcov-lib = { path = "../nixcov-lib" }
 clap = { version = "4.6.1", features = ["derive"] }
 anyhow = "1.0.103"

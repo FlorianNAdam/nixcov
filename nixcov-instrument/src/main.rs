@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use nixtrument_lib::{instrument_flake, instrument_path};
+use nixcov_lib::{instrument_flake, instrument_path};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]

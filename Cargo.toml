@@ -1,4 +1,4 @@
 [workspace]
-members = ["nixtrument", "nixtrument-instrument", "nixtrument-lib"]
-default-members = ["nixtrument", "nixtrument-instrument"]
+members = ["nixcov", "nixcov-instrument", "nixcov-lib"]
+default-members = ["nixcov", "nixcov-instrument"]
 resolver = "2"
