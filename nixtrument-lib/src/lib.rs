@@ -19,7 +19,7 @@ pub struct CoverageMap {
     pub expressions: Vec<ExpressionMapping>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ExpressionMapping {
     pub id: usize,
     pub file: String,
@@ -246,7 +246,7 @@ fn coverage_summary(
         };
 
         let file = relative_source_path(source_root, Path::new(&expression.file));
-        for line in non_comment_lines(source, expression.line_start, expression.line_end) {
+        for line in own_expression_lines(source, expression, &map.expressions) {
             all_lines.insert((expression.file.clone(), line));
             let line_hits = files
                 .entry(file.clone())
@@ -312,17 +312,79 @@ fn write_lcov(path: &Path, coverage: &CoverageSummary) -> Result<()> {
     Ok(())
 }
 
-fn non_comment_lines(source: &str, start: usize, end: usize) -> Vec<usize> {
-    source
-        .lines()
-        .enumerate()
-        .filter_map(|(index, line)| {
-            let number = index + 1;
-            let trimmed = line.trim_start();
-            (number >= start && number <= end && !trimmed.is_empty() && !trimmed.starts_with('#'))
-                .then_some(number)
+fn own_expression_lines(
+    source: &str,
+    expression: &ExpressionMapping,
+    expressions: &[ExpressionMapping],
+) -> Vec<usize> {
+    let mut spans = vec![(expression.byte_start, expression.byte_end)];
+
+    for child in expressions {
+        if child.file == expression.file
+            && child.byte_start >= expression.byte_start
+            && child.byte_end <= expression.byte_end
+            && (child.byte_start, child.byte_end) != (expression.byte_start, expression.byte_end)
+        {
+            subtract_span(&mut spans, child.byte_start, child.byte_end);
+        }
+    }
+
+    line_spans(source)
+        .into_iter()
+        .filter_map(|(line_number, line_start, line_end)| {
+            spans
+                .iter()
+                .any(|(span_start, span_end)| {
+                    let start = (*span_start).max(line_start);
+                    let end = (*span_end).min(line_end);
+                    start < end && has_code_on_line(source, start, end)
+                })
+                .then_some(line_number)
         })
         .collect()
+}
+
+fn subtract_span(spans: &mut Vec<(usize, usize)>, remove_start: usize, remove_end: usize) {
+    let mut next = Vec::new();
+
+    for (start, end) in spans.drain(..) {
+        if remove_end <= start || remove_start >= end {
+            next.push((start, end));
+            continue;
+        }
+
+        if start < remove_start {
+            next.push((start, remove_start));
+        }
+        if remove_end < end {
+            next.push((remove_end, end));
+        }
+    }
+
+    *spans = next;
+}
+
+fn line_spans(source: &str) -> Vec<(usize, usize, usize)> {
+    let mut spans = Vec::new();
+    let mut line_start = 0;
+    let mut line_number = 1;
+
+    for (index, character) in source.char_indices() {
+        if character == '\n' {
+            spans.push((line_number, line_start, index));
+            line_start = index + character.len_utf8();
+            line_number += 1;
+        }
+    }
+
+    spans.push((line_number, line_start, source.len()));
+    spans
+}
+
+fn has_code_on_line(source: &str, start: usize, end: usize) -> bool {
+    let text = &source[start..end];
+    let trimmed = text.trim_start();
+    !trimmed.is_empty() && !trimmed.starts_with('#')
 }
 
 pub fn build_instrumented_source(
@@ -969,6 +1031,37 @@ mod tests {
         assert!(lcov.contains("DA:3,0\n"));
         assert!(lcov.contains("LF:2\n"));
         assert!(lcov.contains("LH:1\n"));
+    }
+
+    #[test]
+    fn expression_own_lines_exclude_child_expression_lines() {
+        let source = "x:\n  x + 1\n";
+        let parent = ExpressionMapping {
+            id: 0,
+            file: "test.nix".to_string(),
+            byte_start: 0,
+            byte_end: 8,
+            line_start: 1,
+            column_start: 1,
+            line_end: 2,
+            column_end: 8,
+            kind: "NODE_LAMBDA".to_string(),
+        };
+        let child = ExpressionMapping {
+            id: 1,
+            file: "test.nix".to_string(),
+            byte_start: 5,
+            byte_end: 8,
+            line_start: 2,
+            column_start: 3,
+            line_end: 2,
+            column_end: 6,
+            kind: "NODE_BIN_OP".to_string(),
+        };
+
+        let lines = own_expression_lines(source, &parent, &[parent.clone(), child]);
+
+        assert_eq!(lines, vec![1]);
     }
 
     #[test]
