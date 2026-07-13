@@ -51,7 +51,7 @@ struct FlakeMetadata {
     path: PathBuf,
 }
 
-pub fn run_coverage(instrument_bin: &Path, flake_ref: &str) -> Result<()> {
+pub fn run_coverage(instrument_bin: &Path, flake_ref: &str, lcov: Option<&Path>) -> Result<()> {
     if !instrument_bin.starts_with("/nix/store") {
         return Err(anyhow!(
             "instrument binary must be a /nix/store path, got {}",
@@ -70,7 +70,12 @@ pub fn run_coverage(instrument_bin: &Path, flake_ref: &str) -> Result<()> {
     println!("run id: {run_id}");
 
     let (status, hits) = run_flake_check_collect_hits(&instrumented_source, &run_id)?;
-    let coverage = coverage_summary(&coverage_map, &run_id, &hits)?;
+    let coverage = coverage_summary(&coverage_map, &source, &run_id, &hits)?;
+
+    if let Some(lcov) = lcov {
+        write_lcov(lcov, &coverage)?;
+        println!("lcov: {}", lcov.display());
+    }
 
     println!(
         "covered expressions: {} / {} ({:.2}%)",
@@ -169,6 +174,7 @@ struct CoverageSummary {
     total_expressions: usize,
     covered_lines: usize,
     total_lines: usize,
+    files: BTreeMap<String, BTreeMap<usize, usize>>,
 }
 
 impl CoverageSummary {
@@ -209,6 +215,7 @@ fn parse_hits_from_text(run_id: &str, text: &str) -> BTreeSet<usize> {
 
 fn coverage_summary(
     coverage_map: &Path,
+    source_root: &Path,
     run_id: &str,
     hits: &BTreeSet<usize>,
 ) -> Result<CoverageSummary> {
@@ -223,6 +230,7 @@ fn coverage_summary(
     let mut all_lines = BTreeSet::new();
     let mut covered_lines = BTreeSet::new();
     let mut covered_expressions = BTreeSet::new();
+    let mut files = BTreeMap::<String, BTreeMap<usize, usize>>::new();
     let mut sources = BTreeMap::new();
 
     for expression in &map.expressions {
@@ -237,10 +245,17 @@ fn coverage_summary(
             continue;
         };
 
+        let file = relative_source_path(source_root, Path::new(&expression.file));
         for line in non_comment_lines(source, expression.line_start, expression.line_end) {
             all_lines.insert((expression.file.clone(), line));
+            let line_hits = files
+                .entry(file.clone())
+                .or_default()
+                .entry(line)
+                .or_default();
             if hits.contains(&expression.id) {
                 covered_lines.insert((expression.file.clone(), line));
+                *line_hits += 1;
             }
         }
     }
@@ -250,7 +265,51 @@ fn coverage_summary(
         total_expressions: map.expressions.len(),
         covered_lines: covered_lines.len(),
         total_lines: all_lines.len(),
+        files,
     })
+}
+
+fn relative_source_path(source_root: &Path, file: &Path) -> String {
+    file.strip_prefix(source_root)
+        .unwrap_or(file)
+        .to_string_lossy()
+        .to_string()
+}
+
+fn write_lcov(path: &Path, coverage: &CoverageSummary) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut output = String::new();
+    for (file, lines) in &coverage.files {
+        output.push_str("SF:");
+        output.push_str(file);
+        output.push('\n');
+
+        let mut hit_lines = 0;
+        for (line, hits) in lines {
+            if *hits > 0 {
+                hit_lines += 1;
+            }
+            output.push_str("DA:");
+            output.push_str(&line.to_string());
+            output.push(',');
+            output.push_str(&hits.to_string());
+            output.push('\n');
+        }
+
+        output.push_str("LF:");
+        output.push_str(&lines.len().to_string());
+        output.push('\n');
+        output.push_str("LH:");
+        output.push_str(&hit_lines.to_string());
+        output.push('\n');
+        output.push_str("end_of_record\n");
+    }
+
+    fs::write(path, output)?;
+    Ok(())
 }
 
 fn non_comment_lines(source: &str, start: usize, end: usize) -> Vec<usize> {
@@ -884,6 +943,32 @@ mod tests {
         );
 
         assert_eq!(hits, BTreeSet::from([1, 42]));
+    }
+
+    #[test]
+    fn writes_lcov_with_relative_source_paths() {
+        let mut files = BTreeMap::new();
+        files.insert(
+            "nix/module.nix".to_string(),
+            BTreeMap::from([(2, 3), (3, 0)]),
+        );
+        let coverage = CoverageSummary {
+            covered_expressions: 1,
+            total_expressions: 2,
+            covered_lines: 1,
+            total_lines: 2,
+            files,
+        };
+        let path = std::env::temp_dir().join(format!("nixtrument-{RUN_ID}.lcov"));
+
+        write_lcov(&path, &coverage).expect("lcov writes");
+        let lcov = fs::read_to_string(&path).expect("lcov reads");
+
+        assert!(lcov.contains("SF:nix/module.nix\n"));
+        assert!(lcov.contains("DA:2,3\n"));
+        assert!(lcov.contains("DA:3,0\n"));
+        assert!(lcov.contains("LF:2\n"));
+        assert!(lcov.contains("LH:1\n"));
     }
 
     #[test]

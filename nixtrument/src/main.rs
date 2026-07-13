@@ -12,6 +12,9 @@ struct Cli {
     /// Nix store path to the nixtrument-instrument binary used inside the instrumentation derivation.
     #[arg(long)]
     instrument_bin: Option<PathBuf>,
+    /// Write LCOV line coverage to this path.
+    #[arg(long)]
+    lcov: Option<PathBuf>,
     /// Flake reference to check.
     #[arg(default_value = ".")]
     flake_ref: String,
@@ -35,5 +38,5 @@ fn run() -> anyhow::Result<()> {
             })?,
     };
 
-    run_coverage(&instrument_bin, &cli.flake_ref)
+    run_coverage(&instrument_bin, &cli.flake_ref, cli.lcov.as_deref())
 }
