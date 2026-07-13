@@ -17,3 +17,6 @@ result-*
 .env
 .env.*
 !.env.example
+
+# Misc
+coverage.lcov

@@ -1,6 +1,6 @@
 use anyhow::anyhow;
-use clap::Parser;
-use nixcov_lib::run_coverage;
+use clap::{Parser, ValueEnum};
+use nixcov_lib::{LcovLineMode, run_coverage};
 use std::env;
 use std::path::PathBuf;
 
@@ -15,6 +15,9 @@ struct Cli {
     /// Write LCOV line coverage to this path.
     #[arg(long)]
     lcov: Option<PathBuf>,
+    /// How expression hits are projected onto LCOV lines.
+    #[arg(long, value_enum, default_value_t = CliLcovLineMode::Strict)]
+    lcov_line_mode: CliLcovLineMode,
     /// Flake reference to check.
     #[arg(default_value = ".")]
     flake_ref: String,
@@ -38,5 +41,27 @@ fn run() -> anyhow::Result<()> {
             })?,
     };
 
-    run_coverage(&instrument_bin, &cli.flake_ref, cli.lcov.as_deref())
+    run_coverage(
+        &instrument_bin,
+        &cli.flake_ref,
+        cli.lcov.as_deref(),
+        cli.lcov_line_mode.into(),
+    )
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CliLcovLineMode {
+    /// Mark a line covered if any expression span on it was hit.
+    AnyHit,
+    /// Mark a line covered only if every expression span on it was hit.
+    Strict,
+}
+
+impl From<CliLcovLineMode> for LcovLineMode {
+    fn from(mode: CliLcovLineMode) -> Self {
+        match mode {
+            CliLcovLineMode::AnyHit => LcovLineMode::AnyHit,
+            CliLcovLineMode::Strict => LcovLineMode::Strict,
+        }
+    }
 }

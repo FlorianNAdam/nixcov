@@ -12,6 +12,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const TRACE_PREFIX: &str = "NIXCOV";
 
+#[derive(Clone, Copy, Debug)]
+pub enum LcovLineMode {
+    AnyHit,
+    Strict,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CoverageMap {
     pub trace_prefix: String,
@@ -51,7 +57,12 @@ struct FlakeMetadata {
     path: PathBuf,
 }
 
-pub fn run_coverage(instrument_bin: &Path, flake_ref: &str, lcov: Option<&Path>) -> Result<()> {
+pub fn run_coverage(
+    instrument_bin: &Path,
+    flake_ref: &str,
+    lcov: Option<&Path>,
+    lcov_line_mode: LcovLineMode,
+) -> Result<()> {
     if !instrument_bin.starts_with("/nix/store") {
         return Err(anyhow!(
             "instrument binary must be a /nix/store path, got {}",
@@ -70,7 +81,7 @@ pub fn run_coverage(instrument_bin: &Path, flake_ref: &str, lcov: Option<&Path>)
     println!("run id: {run_id}");
 
     let (status, hits) = run_flake_check_collect_hits(&instrumented_source, &run_id)?;
-    let coverage = coverage_summary(&coverage_map, &source, &run_id, &hits)?;
+    let coverage = coverage_summary(&coverage_map, &source, &run_id, &hits, lcov_line_mode)?;
 
     if let Some(lcov) = lcov {
         write_lcov(lcov, &coverage)?;
@@ -82,6 +93,12 @@ pub fn run_coverage(instrument_bin: &Path, flake_ref: &str, lcov: Option<&Path>)
         coverage.covered_expressions,
         coverage.total_expressions,
         coverage.expression_percent()
+    );
+    println!(
+        "hit lines: {} / {} ({:.2}%)",
+        coverage.hit_lines,
+        coverage.total_lines,
+        coverage.hit_line_percent()
     );
     println!(
         "covered lines: {} / {} ({:.2}%)",
@@ -172,6 +189,7 @@ fn stream_lines<R: std::io::Read>(
 struct CoverageSummary {
     covered_expressions: usize,
     total_expressions: usize,
+    hit_lines: usize,
     covered_lines: usize,
     total_lines: usize,
     files: BTreeMap<String, BTreeMap<usize, usize>>,
@@ -184,6 +202,10 @@ impl CoverageSummary {
 
     fn line_percent(&self) -> f64 {
         percent(self.covered_lines, self.total_lines)
+    }
+
+    fn hit_line_percent(&self) -> f64 {
+        percent(self.hit_lines, self.total_lines)
     }
 }
 
@@ -218,6 +240,7 @@ fn coverage_summary(
     source_root: &Path,
     run_id: &str,
     hits: &BTreeSet<usize>,
+    lcov_line_mode: LcovLineMode,
 ) -> Result<CoverageSummary> {
     let map: CoverageMap = serde_json::from_str(&fs::read_to_string(coverage_map)?)?;
     if map.run_id != run_id {
@@ -228,9 +251,9 @@ fn coverage_summary(
     }
 
     let mut all_lines = BTreeSet::new();
-    let mut covered_lines = BTreeSet::new();
+    let mut hit_lines = BTreeSet::new();
     let mut covered_expressions = BTreeSet::new();
-    let mut files = BTreeMap::<String, BTreeMap<usize, usize>>::new();
+    let mut files = BTreeMap::<String, BTreeMap<usize, LineCoverage>>::new();
     let mut sources = BTreeMap::new();
 
     for expression in &map.expressions {
@@ -248,25 +271,65 @@ fn coverage_summary(
         let file = relative_source_path(source_root, Path::new(&expression.file));
         for line in own_expression_lines(source, expression, &map.expressions) {
             all_lines.insert((expression.file.clone(), line));
-            let line_hits = files
+            let line_coverage = files
                 .entry(file.clone())
                 .or_default()
                 .entry(line)
                 .or_default();
+            line_coverage.expressions += 1;
             if hits.contains(&expression.id) {
-                covered_lines.insert((expression.file.clone(), line));
-                *line_hits += 1;
+                hit_lines.insert((expression.file.clone(), line));
+                line_coverage.hits += 1;
             }
         }
     }
 
+    let mut covered_lines = 0;
+
+    let files = files
+        .into_iter()
+        .map(|(file, lines)| {
+            let lines = lines
+                .into_iter()
+                .map(|(line, coverage)| {
+                    let hits = lcov_hits_for_line(coverage, lcov_line_mode);
+                    if hits > 0 {
+                        covered_lines += 1;
+                    }
+                    (line, hits)
+                })
+                .collect();
+            (file, lines)
+        })
+        .collect();
+
     Ok(CoverageSummary {
         covered_expressions: covered_expressions.len(),
         total_expressions: map.expressions.len(),
-        covered_lines: covered_lines.len(),
+        hit_lines: hit_lines.len(),
+        covered_lines,
         total_lines: all_lines.len(),
         files,
     })
+}
+
+#[derive(Clone, Copy, Default)]
+struct LineCoverage {
+    expressions: usize,
+    hits: usize,
+}
+
+fn lcov_hits_for_line(coverage: LineCoverage, mode: LcovLineMode) -> usize {
+    match mode {
+        LcovLineMode::AnyHit => coverage.hits,
+        LcovLineMode::Strict => {
+            if coverage.hits == coverage.expressions {
+                coverage.hits
+            } else {
+                0
+            }
+        }
+    }
 }
 
 fn relative_source_path(source_root: &Path, file: &Path) -> String {
@@ -1017,6 +1080,7 @@ mod tests {
         let coverage = CoverageSummary {
             covered_expressions: 1,
             total_expressions: 2,
+            hit_lines: 1,
             covered_lines: 1,
             total_lines: 2,
             files,
@@ -1031,6 +1095,22 @@ mod tests {
         assert!(lcov.contains("DA:3,0\n"));
         assert!(lcov.contains("LF:2\n"));
         assert!(lcov.contains("LH:1\n"));
+    }
+
+    #[test]
+    fn strict_lcov_requires_all_expressions_on_line_to_be_hit() {
+        let partial = LineCoverage {
+            expressions: 2,
+            hits: 1,
+        };
+        let full = LineCoverage {
+            expressions: 2,
+            hits: 2,
+        };
+
+        assert_eq!(lcov_hits_for_line(partial, LcovLineMode::AnyHit), 1);
+        assert_eq!(lcov_hits_for_line(partial, LcovLineMode::Strict), 0);
+        assert_eq!(lcov_hits_for_line(full, LcovLineMode::Strict), 2);
     }
 
     #[test]
