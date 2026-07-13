@@ -1,0 +1,19 @@
+# Rust
+/target/
+
+# Local environments
+.direnv/
+.devenv/
+
+# Tool-generated files
+.pre-commit-config.yaml
+
+# Nix
+result
+result-*
+
+# Private
+.envrc.private
+.env
+.env.*
+!.env.example
