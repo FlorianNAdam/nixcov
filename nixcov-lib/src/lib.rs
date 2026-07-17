@@ -59,7 +59,7 @@ struct FlakeMetadata {
 
 pub fn run_coverage(
     instrument_bin: &Path,
-    flake_ref: &str,
+    command: CoverageCommand,
     lcov: Option<&Path>,
     lcov_line_mode: LcovLineMode,
 ) -> Result<()> {
@@ -71,7 +71,7 @@ pub fn run_coverage(
     }
 
     let run_id = generate_run_id()?;
-    let source = resolve_flake_source(flake_ref)?;
+    let source = resolve_flake_source(command.flake_ref())?;
     println!("source: {}", source.display());
     let instrumented = build_instrumented_source(instrument_bin, &source, &run_id)?;
     let instrumented_source = instrumented.join("source");
@@ -80,7 +80,7 @@ pub fn run_coverage(
     println!("coverage map: {}", coverage_map.display());
     println!("run id: {run_id}");
 
-    let (status, hits) = run_flake_check_collect_hits(&instrumented_source, &run_id)?;
+    let (status, hits) = run_target_collect_hits(&command, &instrumented_source, &run_id)?;
     let coverage = coverage_summary(&coverage_map, &source, &run_id, &hits, lcov_line_mode)?;
 
     if let Some(lcov) = lcov {
@@ -108,13 +108,86 @@ pub fn run_coverage(
     );
 
     if !status.success() {
-        return Err(anyhow!(
-            "nix flake check failed for {}",
-            instrumented_source.display()
-        ));
+        return Err(anyhow!("{} failed", command.command_description()));
     }
 
     Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum CoverageCommand {
+    Check {
+        flake_ref: String,
+        no_build: bool,
+    },
+    Build {
+        flake_ref: String,
+        selector: Option<String>,
+    },
+}
+
+impl CoverageCommand {
+    pub fn check(flake_ref: impl Into<String>, no_build: bool) -> Self {
+        Self::Check {
+            flake_ref: flake_ref.into(),
+            no_build,
+        }
+    }
+
+    pub fn build(installable: &str) -> Self {
+        let target = InstallableTarget::parse(installable);
+
+        Self::Build {
+            flake_ref: target.flake_ref,
+            selector: target.selector,
+        }
+    }
+
+    fn flake_ref(&self) -> &str {
+        match self {
+            Self::Check { flake_ref, .. } | Self::Build { flake_ref, .. } => flake_ref,
+        }
+    }
+
+    fn instrumented_installable(&self, instrumented_source: &Path) -> String {
+        let mut installable = format!("path:{}", instrumented_source.display());
+        if let Self::Build {
+            selector: Some(selector),
+            ..
+        } = self
+        {
+            installable.push_str(selector);
+        }
+        installable
+    }
+
+    fn command_description(&self) -> &'static str {
+        match self {
+            Self::Check { .. } => "nix flake check",
+            Self::Build { .. } => "nix build",
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct InstallableTarget {
+    flake_ref: String,
+    selector: Option<String>,
+}
+
+impl InstallableTarget {
+    fn parse(target: &str) -> Self {
+        let (flake_ref, selector) = match target.split_once('#') {
+            Some(("", selector)) => (".", Some(format!("#{selector}"))),
+            Some((flake_ref, selector)) => (flake_ref, Some(format!("#{selector}"))),
+            None => (target, None),
+        };
+
+        Self {
+            flake_ref: flake_ref.to_string(),
+            selector,
+        }
+    }
 }
 
 fn generate_run_id() -> Result<String> {
@@ -122,17 +195,32 @@ fn generate_run_id() -> Result<String> {
     Ok(format!("{now:x}-{:x}", std::process::id()))
 }
 
-fn run_flake_check_collect_hits(
+fn run_target_collect_hits(
+    target: &CoverageCommand,
     instrumented_source: &Path,
     run_id: &str,
 ) -> Result<(ExitStatus, BTreeSet<usize>)> {
-    let mut child = ProcessCommand::new("nix")
-        .args(["flake", "check", "--no-build"])
-        .arg(instrumented_source)
+    let mut command = ProcessCommand::new("nix");
+    match target {
+        CoverageCommand::Check { no_build, .. } => {
+            command.args(["flake", "check"]);
+            if *no_build {
+                command.arg("--no-build");
+            }
+            command.arg(instrumented_source);
+        }
+        CoverageCommand::Build { .. } => {
+            command
+                .args(["build", "--no-link", "--print-build-logs"])
+                .arg(target.instrumented_installable(instrumented_source));
+        }
+    }
+
+    let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .context("failed to start nix flake check")?;
+        .with_context(|| format!("failed to start {}", target.command_description()))?;
 
     let stdout = child
         .stdout
@@ -926,6 +1014,37 @@ mod tests {
         .expect("metadata parses");
 
         assert_eq!(source, PathBuf::from("/nix/store/abc123-source"));
+    }
+
+    #[test]
+    fn check_command_targets_bare_flake() {
+        let target = CoverageCommand::check("~/dev/nirion", false);
+
+        assert_eq!(target.flake_ref(), "~/dev/nirion");
+        assert_eq!(target.command_description(), "nix flake check");
+    }
+
+    #[test]
+    fn build_command_targets_installable() {
+        let target = CoverageCommand::build("~/dev/nirion#checks.x86_64-linux.module-sops");
+
+        assert_eq!(target.flake_ref(), "~/dev/nirion");
+        assert_eq!(target.command_description(), "nix build");
+        assert_eq!(
+            target.instrumented_installable(Path::new("/nix/store/def456-source")),
+            "path:/nix/store/def456-source#checks.x86_64-linux.module-sops"
+        );
+    }
+
+    #[test]
+    fn defaults_empty_flake_ref_in_selector_target_to_current_directory() {
+        let target = CoverageCommand::build("#checks.x86_64-linux.default");
+
+        assert_eq!(target.flake_ref(), ".");
+        assert_eq!(
+            target.instrumented_installable(Path::new("/nix/store/def456-source")),
+            "path:/nix/store/def456-source#checks.x86_64-linux.default"
+        );
     }
 
     #[test]

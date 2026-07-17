@@ -1,6 +1,6 @@
 use anyhow::anyhow;
-use clap::{Parser, ValueEnum};
-use nixcov_lib::{LcovLineMode, run_coverage};
+use clap::{Parser, Subcommand, ValueEnum};
+use nixcov_lib::{CoverageCommand, LcovLineMode, run_coverage};
 use std::env;
 use std::path::PathBuf;
 
@@ -10,17 +10,34 @@ const INSTRUMENT_BIN_ENV: &str = "NIXCOV_INSTRUMENT_BIN";
 #[command(version, about)]
 struct Cli {
     /// Nix store path to the nixcov-instrument binary used inside the instrumentation derivation.
-    #[arg(long)]
+    #[arg(long, global = true)]
     instrument_bin: Option<PathBuf>,
     /// Write LCOV line coverage to this path.
-    #[arg(long)]
+    #[arg(long, global = true)]
     lcov: Option<PathBuf>,
     /// How expression hits are projected onto LCOV lines.
-    #[arg(long, value_enum, default_value_t = CliLcovLineMode::Strict)]
+    #[arg(long, value_enum, default_value_t = CliLcovLineMode::Strict, global = true)]
     lcov_line_mode: CliLcovLineMode,
-    /// Flake reference to check.
-    #[arg(default_value = ".")]
-    flake_ref: String,
+    #[command(subcommand)]
+    command: Option<CliCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+enum CliCommand {
+    /// Run nix flake check on an instrumented flake source.
+    Check {
+        /// Evaluate checks without building them.
+        #[arg(long)]
+        no_build: bool,
+        /// Flake reference to check.
+        #[arg(default_value = ".")]
+        flake_ref: String,
+    },
+    /// Run nix build on an instrumented flake installable.
+    Build {
+        /// Flake installable to build.
+        installable: String,
+    },
 }
 
 fn main() {
@@ -41,9 +58,18 @@ fn run() -> anyhow::Result<()> {
             })?,
     };
 
+    let command = match cli.command {
+        Some(CliCommand::Check {
+            no_build,
+            flake_ref,
+        }) => CoverageCommand::check(flake_ref, no_build),
+        Some(CliCommand::Build { installable }) => CoverageCommand::build(&installable),
+        None => CoverageCommand::check(".", false),
+    };
+
     run_coverage(
         &instrument_bin,
-        &cli.flake_ref,
+        command,
         cli.lcov.as_deref(),
         cli.lcov_line_mode.into(),
     )
