@@ -24,8 +24,14 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum CliCommand {
-    /// Run nix flake check on an instrumented flake source.
+    /// Evaluate all flake checks with nix build --dry-run.
     Check {
+        /// Flake reference to check.
+        #[arg(default_value = ".")]
+        flake_ref: String,
+    },
+    /// Run nix flake check on an instrumented flake source.
+    FlakeCheck {
         /// Evaluate checks without building them.
         #[arg(long)]
         no_build: bool,
@@ -34,7 +40,10 @@ enum CliCommand {
         flake_ref: String,
     },
     /// Run nix build on an instrumented flake installable.
-    Build {
+    FlakeBuild {
+        /// Show what would be built without realizing build outputs.
+        #[arg(long)]
+        dry_run: bool,
         /// Flake installable to build.
         installable: String,
     },
@@ -59,12 +68,16 @@ fn run() -> anyhow::Result<()> {
     };
 
     let command = match cli.command {
-        Some(CliCommand::Check {
+        Some(CliCommand::Check { flake_ref }) => CoverageCommand::check(flake_ref),
+        Some(CliCommand::FlakeCheck {
             no_build,
             flake_ref,
-        }) => CoverageCommand::check(flake_ref, no_build),
-        Some(CliCommand::Build { installable }) => CoverageCommand::build(&installable),
-        None => CoverageCommand::check(".", false),
+        }) => CoverageCommand::flake_check(flake_ref, no_build),
+        Some(CliCommand::FlakeBuild {
+            dry_run,
+            installable,
+        }) => CoverageCommand::flake_build(&installable, dry_run),
+        None => CoverageCommand::check("."),
     };
 
     run_coverage(

@@ -118,40 +118,53 @@ pub fn run_coverage(
 pub enum CoverageCommand {
     Check {
         flake_ref: String,
+    },
+    FlakeCheck {
+        flake_ref: String,
         no_build: bool,
     },
-    Build {
+    FlakeBuild {
         flake_ref: String,
         selector: Option<String>,
+        dry_run: bool,
     },
 }
 
 impl CoverageCommand {
-    pub fn check(flake_ref: impl Into<String>, no_build: bool) -> Self {
+    pub fn check(flake_ref: impl Into<String>) -> Self {
         Self::Check {
+            flake_ref: flake_ref.into(),
+        }
+    }
+
+    pub fn flake_check(flake_ref: impl Into<String>, no_build: bool) -> Self {
+        Self::FlakeCheck {
             flake_ref: flake_ref.into(),
             no_build,
         }
     }
 
-    pub fn build(installable: &str) -> Self {
+    pub fn flake_build(installable: &str, dry_run: bool) -> Self {
         let target = InstallableTarget::parse(installable);
 
-        Self::Build {
+        Self::FlakeBuild {
             flake_ref: target.flake_ref,
             selector: target.selector,
+            dry_run,
         }
     }
 
     fn flake_ref(&self) -> &str {
         match self {
-            Self::Check { flake_ref, .. } | Self::Build { flake_ref, .. } => flake_ref,
+            Self::Check { flake_ref }
+            | Self::FlakeCheck { flake_ref, .. }
+            | Self::FlakeBuild { flake_ref, .. } => flake_ref,
         }
     }
 
     fn instrumented_installable(&self, instrumented_source: &Path) -> String {
         let mut installable = format!("path:{}", instrumented_source.display());
-        if let Self::Build {
+        if let Self::FlakeBuild {
             selector: Some(selector),
             ..
         } = self
@@ -163,8 +176,9 @@ impl CoverageCommand {
 
     fn command_description(&self) -> &'static str {
         match self {
-            Self::Check { .. } => "nix flake check",
-            Self::Build { .. } => "nix build",
+            Self::Check { .. } => "nix build dry-run checks",
+            Self::FlakeCheck { .. } => "nix flake check",
+            Self::FlakeBuild { .. } => "nix build",
         }
     }
 }
@@ -202,25 +216,102 @@ fn run_target_collect_hits(
 ) -> Result<(ExitStatus, BTreeSet<usize>)> {
     let mut command = ProcessCommand::new("nix");
     match target {
-        CoverageCommand::Check { no_build, .. } => {
+        CoverageCommand::Check { .. } => {
+            return run_flake_outputs_dry_run_collect_hits(instrumented_source, run_id);
+        }
+        CoverageCommand::FlakeCheck { no_build, .. } => {
             command.args(["flake", "check"]);
             if *no_build {
                 command.arg("--no-build");
             }
             command.arg(instrumented_source);
         }
-        CoverageCommand::Build { .. } => {
-            command
-                .args(["build", "--no-link", "--print-build-logs"])
-                .arg(target.instrumented_installable(instrumented_source));
+        CoverageCommand::FlakeBuild { dry_run, .. } => {
+            command.args(["build", "--no-link", "--print-build-logs"]);
+            if *dry_run {
+                command.arg("--dry-run");
+            }
+            command.arg(target.instrumented_installable(instrumented_source));
         }
     }
 
+    spawn_and_collect_hits(command, run_id, target.command_description())
+}
+
+fn run_flake_outputs_dry_run_collect_hits(
+    instrumented_source: &Path,
+    run_id: &str,
+) -> Result<(ExitStatus, BTreeSet<usize>)> {
+    let installables = flake_dry_run_installables(instrumented_source)?;
+    if installables.is_empty() {
+        println!("no flake checks or packages found");
+    }
+
+    let mut all_hits = BTreeSet::new();
+    let mut failed = None;
+    for installable in installables {
+        println!("checking {installable}...");
+        let mut command = ProcessCommand::new("nix");
+        command
+            .args(["build", "--dry-run", "--no-link", "--print-build-logs"])
+            .arg(format!(
+                "path:{}#{installable}",
+                instrumented_source.display()
+            ));
+        let (status, hits) = spawn_and_collect_hits(command, run_id, "nix build dry-run")?;
+        all_hits.extend(hits);
+        if !status.success() && failed.is_none() {
+            failed = Some(status);
+        }
+    }
+
+    Ok((failed.unwrap_or_else(success_status), all_hits))
+}
+
+fn flake_dry_run_installables(instrumented_source: &Path) -> Result<Vec<String>> {
+    let flake = nix_string_literal(&format!("path:{}", instrumented_source.display()))?;
+    let expr = format!(
+        r#"
+        let
+          flake = builtins.getFlake {flake};
+          system = builtins.currentSystem;
+          names = builtins.attrNames;
+          outputInstallables = output:
+            let attrs = flake.${{output}} or {{}};
+            in map
+              (name: "${{output}}.${{system}}.${{name}}")
+              (names (attrs.${{system}} or {{}}));
+        in
+          outputInstallables "checks" ++ outputInstallables "packages"
+        "#
+    );
+
+    let output = ProcessCommand::new("nix")
+        .args(["eval", "--impure", "--json", "--expr"])
+        .arg(expr)
+        .output()
+        .context("failed to start nix eval for flake outputs")?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "failed to enumerate flake outputs: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+
+fn spawn_and_collect_hits(
+    mut command: ProcessCommand,
+    run_id: &str,
+    description: &str,
+) -> Result<(ExitStatus, BTreeSet<usize>)> {
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .with_context(|| format!("failed to start {}", target.command_description()))?;
+        .with_context(|| format!("failed to start {description}"))?;
 
     let stdout = child
         .stdout
@@ -247,6 +338,13 @@ fn run_target_collect_hits(
     );
 
     Ok((status, hits))
+}
+
+#[cfg(unix)]
+fn success_status() -> ExitStatus {
+    use std::os::unix::process::ExitStatusExt;
+
+    ExitStatus::from_raw(0)
 }
 
 fn stream_lines<R: std::io::Read>(
@@ -1018,15 +1116,16 @@ mod tests {
 
     #[test]
     fn check_command_targets_bare_flake() {
-        let target = CoverageCommand::check("~/dev/nirion", false);
+        let target = CoverageCommand::check("~/dev/nirion");
 
         assert_eq!(target.flake_ref(), "~/dev/nirion");
-        assert_eq!(target.command_description(), "nix flake check");
+        assert_eq!(target.command_description(), "nix build dry-run checks");
     }
 
     #[test]
     fn build_command_targets_installable() {
-        let target = CoverageCommand::build("~/dev/nirion#checks.x86_64-linux.module-sops");
+        let target =
+            CoverageCommand::flake_build("~/dev/nirion#checks.x86_64-linux.module-sops", false);
 
         assert_eq!(target.flake_ref(), "~/dev/nirion");
         assert_eq!(target.command_description(), "nix build");
@@ -1038,7 +1137,7 @@ mod tests {
 
     #[test]
     fn defaults_empty_flake_ref_in_selector_target_to_current_directory() {
-        let target = CoverageCommand::build("#checks.x86_64-linux.default");
+        let target = CoverageCommand::flake_build("#checks.x86_64-linux.default", false);
 
         assert_eq!(target.flake_ref(), ".");
         assert_eq!(
