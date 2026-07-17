@@ -264,23 +264,37 @@ fn run_flake_outputs_dry_run_collect_hits(
     instrumented_source: &Path,
     run_id: &str,
 ) -> Result<(ExitStatus, BTreeSet<usize>)> {
-    let installables = flake_dry_run_installables(instrumented_source)?;
-    if installables.is_empty() {
-        println!("no flake checks or packages found");
+    let targets = flake_dry_run_targets(instrumented_source)?;
+    if targets.is_empty() {
+        println!("no flake checks, packages, or apps found");
     }
 
     let mut all_hits = BTreeSet::new();
     let mut failed = None;
-    for installable in installables {
-        println!("checking {installable}...");
+    for target in targets {
         let mut command = ProcessCommand::new("nix");
-        command
-            .args(["build", "--dry-run", "--no-link", "--print-build-logs"])
-            .arg(format!(
-                "path:{}#{installable}",
-                instrumented_source.display()
-            ));
-        let (status, hits) = spawn_and_collect_hits(command, run_id, "nix build dry-run")?;
+        let description = match target {
+            FlakeDryRunTarget::Build { attribute } => {
+                let installable = attribute;
+                println!("checking {installable}...");
+                command
+                    .args(["build", "--dry-run", "--no-link", "--print-build-logs"])
+                    .arg(format!(
+                        "path:{}#{installable}",
+                        instrumented_source.display()
+                    ));
+                "nix build dry-run"
+            }
+            FlakeDryRunTarget::Eval { attribute } => {
+                println!("checking {attribute}...");
+                command.args(["eval", "--raw"]).arg(format!(
+                    "path:{}#{attribute}",
+                    instrumented_source.display()
+                ));
+                "nix eval"
+            }
+        };
+        let (status, hits) = spawn_and_collect_hits(command, run_id, description)?;
         all_hits.extend(hits);
         if !status.success() && failed.is_none() {
             failed = Some(status);
@@ -290,7 +304,14 @@ fn run_flake_outputs_dry_run_collect_hits(
     Ok((failed.unwrap_or_else(success_status), all_hits))
 }
 
-fn flake_dry_run_installables(instrumented_source: &Path) -> Result<Vec<String>> {
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum FlakeDryRunTarget {
+    Build { attribute: String },
+    Eval { attribute: String },
+}
+
+fn flake_dry_run_targets(instrumented_source: &Path) -> Result<Vec<FlakeDryRunTarget>> {
     let flake = nix_string_literal(&format!("path:{}", instrumented_source.display()))?;
     let expr = format!(
         r#"
@@ -301,10 +322,13 @@ fn flake_dry_run_installables(instrumented_source: &Path) -> Result<Vec<String>>
           outputInstallables = output:
             let attrs = flake.${{output}} or {{}};
             in map
-              (name: "${{output}}.${{system}}.${{name}}")
+              (name: {{ type = "Build"; attribute = "${{output}}.${{system}}.${{name}}"; }})
               (names (attrs.${{system}} or {{}}));
         in
           outputInstallables "checks" ++ outputInstallables "packages"
+          ++ map
+            (name: {{ type = "Eval"; attribute = "apps.${{system}}.${{name}}.program"; }})
+            (names ((flake.apps or {{}}).${{system}} or {{}}))
         "#
     );
 

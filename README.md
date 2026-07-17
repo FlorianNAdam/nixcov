@@ -26,10 +26,10 @@ relative paths keep working in the instrumented tree.
 
 `nixcov` resolves the flake source, builds one derivation that runs the given
 store-path `nixcov-instrument` binary to produce an instrumented source tree
-plus `coverage-map.json`. `check` enumerates flake `checks` and `packages` for
-the current system and runs `nix build --dry-run --no-link` for each installable
-from the instrumented source. Use `flake-check` to run `nix flake check` directly, or `flake-build` to
-run `nix build --no-link` for one installable. For example,
+plus `coverage-map.json`. `check` enumerates flake `checks`, `packages`, and
+`apps` for the current system. It runs `nix build --dry-run --no-link` for
+checks/packages and evaluates app `program` paths from the instrumented source.
+Use `flake-check` to run `nix flake check` directly, or `flake-build` to run `nix build --no-link` for one installable. For example,
 `nix run .#nixcov -- flake-build --dry-run ~/dev/nirion#checks.x86_64-linux.module-sops`
 evaluates a single check from the instrumented source. The packaged `nixcov` binary is
 wrapped with `NIXCOV_INSTRUMENT_BIN`, so `nix run .# -- ...` uses the matching
