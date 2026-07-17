@@ -1,3 +1,6 @@
+mod ansi;
+mod table;
+
 use anyhow::{Context, Result, anyhow};
 use rnix::ast;
 use rowan::ast::AstNode;
@@ -9,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, ExitStatus, Stdio};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+use table::print_table;
 
 pub const TRACE_PREFIX: &str = "NIXCOV";
 
@@ -16,6 +20,13 @@ pub const TRACE_PREFIX: &str = "NIXCOV";
 pub enum LcovLineMode {
     AnyHit,
     Strict,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SummaryMode {
+    None,
+    Totals,
+    Files,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -62,6 +73,7 @@ pub fn run_coverage(
     command: CoverageCommand,
     lcov: Option<&Path>,
     lcov_line_mode: LcovLineMode,
+    summary_mode: SummaryMode,
 ) -> Result<()> {
     if !instrument_bin.starts_with("/nix/store") {
         return Err(anyhow!(
@@ -88,6 +100,22 @@ pub fn run_coverage(
         println!("lcov: {}", lcov.display());
     }
 
+    if summary_mode == SummaryMode::Files {
+        print_file_summary(&coverage);
+        println!();
+    }
+    if matches!(summary_mode, SummaryMode::Totals | SummaryMode::Files) {
+        print_totals_summary(&coverage);
+    }
+
+    if !status.success() {
+        return Err(anyhow!("{} failed", command.command_description()));
+    }
+
+    Ok(())
+}
+
+fn print_totals_summary(coverage: &CoverageSummary) {
     println!(
         "covered expressions: {} / {} ({:.2}%)",
         coverage.covered_expressions,
@@ -106,12 +134,6 @@ pub fn run_coverage(
         coverage.total_lines,
         coverage.line_percent()
     );
-
-    if !status.success() {
-        return Err(anyhow!("{} failed", command.command_description()));
-    }
-
-    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -393,6 +415,44 @@ impl CoverageSummary {
     fn hit_line_percent(&self) -> f64 {
         percent(self.hit_lines, self.total_lines)
     }
+}
+
+fn print_file_summary(coverage: &CoverageSummary) {
+    let mut rows = vec!["file\tcovered\tlines\tpercent".to_string()];
+
+    for (file, lines) in &coverage.files {
+        let total = lines.len();
+        let covered = lines.values().filter(|hits| **hits > 0).count();
+        rows.push(format!(
+            "{}\t{}\t{}\t{:.2}%",
+            truncate_summary_file(file),
+            covered,
+            total,
+            percent(covered, total)
+        ));
+    }
+
+    println!();
+    println!("coverage summary:");
+    print_table(rows);
+}
+
+fn truncate_summary_file(file: &str) -> String {
+    const WIDTH: usize = 56;
+
+    if file.chars().count() <= WIDTH {
+        return file.to_string();
+    }
+
+    let suffix = file
+        .chars()
+        .rev()
+        .take(WIDTH - 1)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    format!("…{suffix}")
 }
 
 fn percent(part: usize, total: usize) -> f64 {

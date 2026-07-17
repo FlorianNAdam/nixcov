@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use clap::{Parser, Subcommand, ValueEnum};
-use nixcov_lib::{CoverageCommand, LcovLineMode, run_coverage};
+use nixcov_lib::{CoverageCommand, LcovLineMode, SummaryMode, run_coverage};
 use std::env;
 use std::path::PathBuf;
 
@@ -18,6 +18,9 @@ struct Cli {
     /// How expression hits are projected onto LCOV lines.
     #[arg(long, value_enum, default_value_t = CliLcovLineMode::Strict, global = true)]
     lcov_line_mode: CliLcovLineMode,
+    /// Terminal coverage summary mode.
+    #[arg(long, value_enum, default_value_t = CliSummaryMode::Totals, global = true)]
+    summary: CliSummaryMode,
     #[command(subcommand)]
     command: Option<CliCommand>,
 }
@@ -85,6 +88,7 @@ fn run() -> anyhow::Result<()> {
         command,
         cli.lcov.as_deref(),
         cli.lcov_line_mode.into(),
+        cli.summary.into(),
     )
 }
 
@@ -101,6 +105,26 @@ impl From<CliLcovLineMode> for LcovLineMode {
         match mode {
             CliLcovLineMode::AnyHit => LcovLineMode::AnyHit,
             CliLcovLineMode::Strict => LcovLineMode::Strict,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CliSummaryMode {
+    /// Do not print coverage totals.
+    None,
+    /// Print aggregate coverage totals.
+    Totals,
+    /// Print aggregate totals and a per-file table.
+    Files,
+}
+
+impl From<CliSummaryMode> for SummaryMode {
+    fn from(mode: CliSummaryMode) -> Self {
+        match mode {
+            CliSummaryMode::None => SummaryMode::None,
+            CliSummaryMode::Totals => SummaryMode::Totals,
+            CliSummaryMode::Files => SummaryMode::Files,
         }
     }
 }

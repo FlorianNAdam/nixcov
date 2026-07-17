@@ -14,6 +14,9 @@ nix run .# -- flake-check [--no-build] [flake-ref]
 nix run .# -- flake-build [--dry-run] <installable>
 ```
 
+Use `--summary none`, `--summary totals`, or `--summary files` to control
+terminal coverage output. The default is `--summary totals`.
+
 The instrumenter resolves the flake with `nix flake metadata --json`, uses the
 source path reported by Nix, parses each `.nix` file with `rnix`, wraps original
 expression ranges with `builtins.trace "NIXCOV:<run-id>:<id>" (...)`, and writes a
