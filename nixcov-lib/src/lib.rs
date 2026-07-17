@@ -287,10 +287,22 @@ fn run_flake_outputs_dry_run_collect_hits(
             }
             FlakeDryRunTarget::Eval { attribute } => {
                 println!("checking {attribute}...");
-                command.args(["eval", "--raw"]).arg(format!(
-                    "path:{}#{attribute}",
-                    instrumented_source.display()
-                ));
+                command
+                    .args(["eval", "--json"])
+                    .arg(format!(
+                        "path:{}#{attribute}",
+                        instrumented_source.display()
+                    ))
+                    .args([
+                        "--apply",
+                        r#"app:
+                          assert app.type or null == "app";
+                          assert builtins.isString app.program;
+                          assert builtins.substring 0 1 app.program == "/";
+                          assert builtins.isAttrs (app.meta or {});
+                          builtins.deepSeq (app.meta or {})
+                          app.program"#,
+                    ]);
                 "nix eval"
             }
         };
@@ -327,7 +339,7 @@ fn flake_dry_run_targets(instrumented_source: &Path) -> Result<Vec<FlakeDryRunTa
         in
           outputInstallables "checks" ++ outputInstallables "packages" ++ outputInstallables "devShells"
           ++ map
-            (name: {{ type = "Eval"; attribute = "apps.${{system}}.${{name}}.program"; }})
+            (name: {{ type = "Eval"; attribute = "apps.${{system}}.${{name}}"; }})
             (names ((flake.apps or {{}}).${{system}} or {{}}))
         "#
     );
