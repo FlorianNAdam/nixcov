@@ -17,7 +17,7 @@ use table::print_table;
 pub const TRACE_PREFIX: &str = "NIXCOV";
 
 #[derive(Clone, Copy, Debug)]
-pub enum LcovLineMode {
+pub enum LineMode {
     AnyHit,
     Strict,
 }
@@ -72,7 +72,7 @@ pub fn run_coverage(
     instrument_bin: &Path,
     command: CoverageCommand,
     lcov: Option<&Path>,
-    lcov_line_mode: LcovLineMode,
+    line_mode: LineMode,
     summary_mode: SummaryMode,
 ) -> Result<()> {
     if !instrument_bin.starts_with("/nix/store") {
@@ -93,7 +93,7 @@ pub fn run_coverage(
     println!("run id: {run_id}");
 
     let (status, hits) = run_target_collect_hits(&command, &instrumented_source, &run_id)?;
-    let coverage = coverage_summary(&coverage_map, &source, &run_id, &hits, lcov_line_mode)?;
+    let coverage = coverage_summary(&coverage_map, &source, &run_id, &hits, line_mode)?;
 
     if let Some(lcov) = lcov {
         write_lcov(lcov, &coverage)?;
@@ -510,7 +510,7 @@ fn coverage_summary(
     source_root: &Path,
     run_id: &str,
     hits: &BTreeSet<usize>,
-    lcov_line_mode: LcovLineMode,
+    line_mode: LineMode,
 ) -> Result<CoverageSummary> {
     let map: CoverageMap = serde_json::from_str(&fs::read_to_string(coverage_map)?)?;
     if map.run_id != run_id {
@@ -562,7 +562,7 @@ fn coverage_summary(
             let lines = lines
                 .into_iter()
                 .map(|(line, coverage)| {
-                    let hits = lcov_hits_for_line(coverage, lcov_line_mode);
+                    let hits = line_hits_for_mode(coverage, line_mode);
                     if hits > 0 {
                         covered_lines += 1;
                     }
@@ -589,10 +589,10 @@ struct LineCoverage {
     hits: usize,
 }
 
-fn lcov_hits_for_line(coverage: LineCoverage, mode: LcovLineMode) -> usize {
+fn line_hits_for_mode(coverage: LineCoverage, mode: LineMode) -> usize {
     match mode {
-        LcovLineMode::AnyHit => coverage.hits,
-        LcovLineMode::Strict => {
+        LineMode::AnyHit => coverage.hits,
+        LineMode::Strict => {
             if coverage.hits == coverage.expressions {
                 coverage.hits
             } else {
@@ -1410,9 +1410,9 @@ mod tests {
             hits: 2,
         };
 
-        assert_eq!(lcov_hits_for_line(partial, LcovLineMode::AnyHit), 1);
-        assert_eq!(lcov_hits_for_line(partial, LcovLineMode::Strict), 0);
-        assert_eq!(lcov_hits_for_line(full, LcovLineMode::Strict), 2);
+        assert_eq!(line_hits_for_mode(partial, LineMode::AnyHit), 1);
+        assert_eq!(line_hits_for_mode(partial, LineMode::Strict), 0);
+        assert_eq!(line_hits_for_mode(full, LineMode::Strict), 2);
     }
 
     #[test]

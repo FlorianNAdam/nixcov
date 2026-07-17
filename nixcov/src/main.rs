@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use clap::{Parser, Subcommand, ValueEnum};
-use nixcov_lib::{CoverageCommand, LcovLineMode, SummaryMode, run_coverage};
+use nixcov_lib::{CoverageCommand, LineMode, SummaryMode, run_coverage};
 use std::env;
 use std::path::PathBuf;
 
@@ -15,9 +15,9 @@ struct Cli {
     /// Write LCOV line coverage to this path.
     #[arg(long, global = true)]
     lcov: Option<PathBuf>,
-    /// How expression hits are projected onto LCOV lines.
-    #[arg(long, value_enum, default_value_t = CliLcovLineMode::Strict, global = true)]
-    lcov_line_mode: CliLcovLineMode,
+    /// How expression hits are projected onto lines.
+    #[arg(long, value_enum, default_value_t = CliLineMode::Strict, global = true)]
+    line_mode: CliLineMode,
     /// Terminal coverage summary mode.
     #[arg(long, value_enum, default_value_t = CliSummaryMode::Totals, global = true)]
     summary: CliSummaryMode,
@@ -87,24 +87,24 @@ fn run() -> anyhow::Result<()> {
         &instrument_bin,
         command,
         cli.lcov.as_deref(),
-        cli.lcov_line_mode.into(),
+        cli.line_mode.into(),
         cli.summary.into(),
     )
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
-enum CliLcovLineMode {
+enum CliLineMode {
     /// Mark a line covered if any expression span on it was hit.
     AnyHit,
     /// Mark a line covered only if every expression span on it was hit.
     Strict,
 }
 
-impl From<CliLcovLineMode> for LcovLineMode {
-    fn from(mode: CliLcovLineMode) -> Self {
+impl From<CliLineMode> for LineMode {
+    fn from(mode: CliLineMode) -> Self {
         match mode {
-            CliLcovLineMode::AnyHit => LcovLineMode::AnyHit,
-            CliLcovLineMode::Strict => LcovLineMode::Strict,
+            CliLineMode::AnyHit => LineMode::AnyHit,
+            CliLineMode::Strict => LineMode::Strict,
         }
     }
 }

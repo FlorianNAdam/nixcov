@@ -16,6 +16,8 @@ nix run .# -- flake-build [--dry-run] <installable>
 
 Use `--summary none`, `--summary totals`, or `--summary files` to control
 terminal coverage output. The default is `--summary totals`.
+Use `--line-mode strict` or `--line-mode any-hit` to control how expression hits
+are projected onto line coverage for both terminal summaries and LCOV output.
 
 The instrumenter resolves the flake with `nix flake metadata --json`, uses the
 source path reported by Nix, parses each `.nix` file with `rnix`, wraps original
