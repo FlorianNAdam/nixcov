@@ -266,7 +266,7 @@ fn run_flake_outputs_dry_run_collect_hits(
 ) -> Result<(ExitStatus, BTreeSet<usize>)> {
     let targets = flake_dry_run_targets(instrumented_source)?;
     if targets.is_empty() {
-        println!("no flake checks, packages, or apps found");
+        println!("no flake checks, packages, devShells, or apps found");
     }
 
     let mut all_hits = BTreeSet::new();
@@ -325,7 +325,7 @@ fn flake_dry_run_targets(instrumented_source: &Path) -> Result<Vec<FlakeDryRunTa
               (name: {{ type = "Build"; attribute = "${{output}}.${{system}}.${{name}}"; }})
               (names (attrs.${{system}} or {{}}));
         in
-          outputInstallables "checks" ++ outputInstallables "packages"
+          outputInstallables "checks" ++ outputInstallables "packages" ++ outputInstallables "devShells"
           ++ map
             (name: {{ type = "Eval"; attribute = "apps.${{system}}.${{name}}.program"; }})
             (names ((flake.apps or {{}}).${{system}} or {{}}))
