@@ -127,7 +127,7 @@ fn run_flake_check_collect_hits(
     run_id: &str,
 ) -> Result<(ExitStatus, BTreeSet<usize>)> {
     let mut child = ProcessCommand::new("nix")
-        .args(["flake", "check"])
+        .args(["flake", "check", "--no-build"])
         .arg(instrumented_source)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
